@@ -1,4 +1,6 @@
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.net.ServerSocket;
 import java.net.Socket;
 
@@ -7,7 +9,6 @@ public class Main {
     // You can use print statements as follows for debugging, they'll be visible when running tests.
     System.out.println("Logs from your program will appear here!");
 
-    //  Uncomment the code below to pass the first stage
         ServerSocket serverSocket = null;
         Socket clientSocket = null;
         int port = 6379;
@@ -17,7 +18,14 @@ public class Main {
           // ensures that we don't run into 'Address already in use' errors
           serverSocket.setReuseAddress(true);
           clientSocket = serverSocket.accept();
-          clientSocket.getOutputStream().write("+PONG\r\n".getBytes());
+
+          InputStream input = clientSocket.getInputStream();
+          OutputStream output = clientSocket.getOutputStream();
+          byte[] buffer = new byte[1024];
+          int bytesRead;
+          while ((bytesRead = input.read(buffer)) != -1) {
+            output.write("+PONG\r\n".getBytes());
+          }
         } catch (IOException e) {
           System.out.println("IOException: " + e.getMessage());
         } finally {
