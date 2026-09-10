@@ -1,15 +1,18 @@
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 // Dispatches a parsed command (e.g. ["ECHO", "hey"]) to the right handler
 // and returns the RESP-encoded reply Main should write back to the client.
 public class CommandHandler {
 
   // Main.java uses one shared CommandHandler instance across all client
-  // threads, so this map is read/written concurrently — ConcurrentHashMap
+  // threads, so these maps are read/written concurrently — ConcurrentHashMap
   // keeps that safe without us hand-rolling locking.
   private final Map<String, Entry> store = new ConcurrentHashMap<>();
+  private final Map<String, List<String>> lists = new ConcurrentHashMap<>();
 
   public String handle(String[] args) {
     if (args.length == 0) {
@@ -29,9 +32,23 @@ public class CommandHandler {
         return handleSet(args);
       case "GET":
         return handleGet(args);
+      case "RPUSH":
+        return handleRpush(args);
       default:
         return "-ERR unknown command '" + args[0] + "'\r\n";
     }
+  }
+
+  private String handleRpush(String[] args) {
+    if (args.length < 3) {
+      return "-ERR wrong number of arguments for 'rpush' command\r\n";
+    }
+
+    List<String> list = lists.computeIfAbsent(args[1], key -> new CopyOnWriteArrayList<>());
+    for (int i = 2; i < args.length; i++) {
+      list.add(args[i]);
+    }
+    return ":" + list.size() + "\r\n";
   }
 
   private String handleSet(String[] args) {
