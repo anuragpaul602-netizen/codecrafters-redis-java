@@ -34,6 +34,8 @@ public class CommandHandler {
         return handleGet(args);
       case "RPUSH":
         return handleRpush(args);
+      case "LRANGE":
+        return handleLrange(args);
       default:
         return "-ERR unknown command '" + args[0] + "'\r\n";
     }
@@ -49,6 +51,42 @@ public class CommandHandler {
       list.add(args[i]);
     }
     return ":" + list.size() + "\r\n";
+  }
+
+  private String handleLrange(String[] args) {
+    if (args.length < 4) {
+      return "-ERR wrong number of arguments for 'lrange' command\r\n";
+    }
+
+    int start;
+    int stop;
+    try {
+      start = Integer.parseInt(args[2]);
+      stop = Integer.parseInt(args[3]);
+    } catch (NumberFormatException e) {
+      return "-ERR value is not an integer or out of range\r\n";
+    }
+
+    // A key with no list is treated as an empty list, not an error.
+    List<String> list = lists.getOrDefault(args[1], List.of());
+    int size = list.size();
+
+    // Clamp stop into range; an out-of-range start just yields no elements
+    // once compared against the clamped stop below.
+    if (stop >= size) {
+      stop = size - 1;
+    }
+    if (start < 0 || start > stop || size == 0) {
+      return "*0\r\n";
+    }
+
+    List<String> slice = list.subList(start, stop + 1);
+    StringBuilder response = new StringBuilder();
+    response.append('*').append(slice.size()).append("\r\n");
+    for (String element : slice) {
+      response.append(encodeBulkString(element));
+    }
+    return response.toString();
   }
 
   private String handleSet(String[] args) {
