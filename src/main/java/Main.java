@@ -24,8 +24,8 @@ public class Main {
           int bytesRead;
           while ((bytesRead = input.read(buffer)) != -1) {
             output.write("+PONG\r\n".getBytes());
-            new Thread(handleClient(clientSocket)).start();
           }
+          new Thread(()-> handleClient(clientSocket)).start();
         } catch (IOException e) {
           System.out.println("IOException: " + e.getMessage());
         } finally {
