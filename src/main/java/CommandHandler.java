@@ -1,8 +1,15 @@
 import java.nio.charset.StandardCharsets;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 // Dispatches a parsed command (e.g. ["ECHO", "hey"]) to the right handler
 // and returns the RESP-encoded reply Main should write back to the client.
 public class CommandHandler {
+
+  // Main.java uses one shared CommandHandler instance across all client
+  // threads, so this map is read/written concurrently — ConcurrentHashMap
+  // keeps that safe without us hand-rolling locking.
+  private final Map<String, String> store = new ConcurrentHashMap<>();
 
   public String handle(String[] args) {
     if (args.length == 0) {
@@ -18,6 +25,20 @@ public class CommandHandler {
           return "-ERR wrong number of arguments for 'echo' command\r\n";
         }
         return encodeBulkString(args[1]);
+      case "SET":
+        if (args.length < 3) {
+          return "-ERR wrong number of arguments for 'set' command\r\n";
+        }
+        store.put(args[1], args[2]);
+        return "+OK\r\n";
+      case "GET":
+        if (args.length < 2) {
+          return "-ERR wrong number of arguments for 'get' command\r\n";
+        }
+        String value = store.get(args[1]);
+        // Redis represents "key not found" as a null bulk string ($-1\r\n),
+        // distinct from an empty string value (which would be $0\r\n\r\n).
+        return value == null ? "$-1\r\n" : encodeBulkString(value);
       default:
         return "-ERR unknown command '" + args[0] + "'\r\n";
     }
