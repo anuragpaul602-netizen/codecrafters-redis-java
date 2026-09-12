@@ -44,6 +44,8 @@ public class CommandHandler {
         return handleBlpop(args);
       case "LRANGE":
         return handleLrange(args);
+      case "TYPE":
+        return handleType(args);
       default:
         return "-ERR unknown command '" + args[0] + "'\r\n";
     }
@@ -113,6 +115,22 @@ public class CommandHandler {
       response.append(encodeBulkString(list.remove(0)));
     }
     return response.toString();
+  }
+
+  private String handleType(String[] args) {
+    if (args.length < 2) {
+      return "-ERR wrong number of arguments for 'type' command\r\n";
+    }
+    String key = args[1];
+
+    Entry entry = store.get(key);
+    if (entry != null && !entry.isExpired()) {
+      return "+string\r\n";
+    }
+    if (lists.containsKey(key)) {
+      return "+list\r\n";
+    }
+    return "+none\r\n";
   }
 
   private String handleBlpop(String[] args) {
