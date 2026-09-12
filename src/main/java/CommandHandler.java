@@ -38,6 +38,8 @@ public class CommandHandler {
         return handleLpush(args);
       case "LLEN":
         return handleLlen(args);
+      case "LPOP":
+        return handleLpop(args);
       case "LRANGE":
         return handleLrange(args);
       default:
@@ -77,6 +79,38 @@ public class CommandHandler {
     }
     List<String> list = lists.getOrDefault(args[1], List.of());
     return ":" + list.size() + "\r\n";
+  }
+
+  private String handleLpop(String[] args) {
+    if (args.length < 2) {
+      return "-ERR wrong number of arguments for 'lpop' command\r\n";
+    }
+    List<String> list = lists.get(args[1]);
+
+    if (args.length == 2) {
+      if (list == null || list.isEmpty()) {
+        return "$-1\r\n";
+      }
+      return encodeBulkString(list.remove(0));
+    }
+
+    int count;
+    try {
+      count = Integer.parseInt(args[2]);
+    } catch (NumberFormatException e) {
+      return "-ERR value is not an integer or out of range\r\n";
+    }
+    if (list == null || list.isEmpty() || count <= 0) {
+      return "*0\r\n";
+    }
+
+    int popCount = Math.min(count, list.size());
+    StringBuilder response = new StringBuilder();
+    response.append('*').append(popCount).append("\r\n");
+    for (int i = 0; i < popCount; i++) {
+      response.append(encodeBulkString(list.remove(0)));
+    }
+    return response.toString();
   }
 
   private String handleLrange(String[] args) {
