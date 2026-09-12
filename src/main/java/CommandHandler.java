@@ -40,6 +40,8 @@ public class CommandHandler {
         return handleLlen(args);
       case "LPOP":
         return handleLpop(args);
+      case "BLPOP":
+        return handleBlpop(args);
       case "LRANGE":
         return handleLrange(args);
       default:
@@ -111,6 +113,47 @@ public class CommandHandler {
       response.append(encodeBulkString(list.remove(0)));
     }
     return response.toString();
+  }
+
+  private String handleBlpop(String[] args) {
+    if (args.length < 3) {
+      return "-ERR wrong number of arguments for 'blpop' command\r\n";
+    }
+
+    String key = args[1];
+    double timeoutSeconds;
+    try {
+      timeoutSeconds = Double.parseDouble(args[2]);
+    } catch (NumberFormatException e) {
+      return "-ERR timeout is not a float or out of range\r\n";
+    }
+    // timeout 0 means block forever, so there's no deadline to compare against.
+    long deadline = timeoutSeconds > 0 ? System.currentTimeMillis() + (long) (timeoutSeconds * 1000) : -1;
+
+    // Each client already runs on its own dedicated thread (see Main.java),
+    // so we can just have this thread poll and sleep instead of needing any
+    // async/notify machinery.
+    while (true) {
+      List<String> list = lists.get(key);
+      if (list != null && !list.isEmpty()) {
+        try {
+          String value = list.remove(0);
+          return "*2\r\n" + encodeBulkString(key) + encodeBulkString(value);
+        } catch (IndexOutOfBoundsException e) {
+          // Another thread popped the last element between our isEmpty()
+          // check and remove(0) — just fall through and keep polling.
+        }
+      }
+      if (deadline != -1 && System.currentTimeMillis() >= deadline) {
+        return "*-1\r\n";
+      }
+      try {
+        Thread.sleep(50);
+      } catch (InterruptedException e) {
+        Thread.currentThread().interrupt();
+        return "*-1\r\n";
+      }
+    }
   }
 
   private String handleLrange(String[] args) {
