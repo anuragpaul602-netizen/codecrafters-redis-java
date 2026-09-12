@@ -36,6 +36,8 @@ public class CommandHandler {
         return handleRpush(args);
       case "LPUSH":
         return handleLpush(args);
+      case "LLEN":
+        return handleLlen(args);
       case "LRANGE":
         return handleLrange(args);
       default:
@@ -66,6 +68,14 @@ public class CommandHandler {
     for (int i = 2; i < args.length; i++) {
       list.add(0, args[i]);
     }
+    return ":" + list.size() + "\r\n";
+  }
+
+  private String handleLlen(String[] args) {
+    if (args.length < 2) {
+      return "-ERR wrong number of arguments for 'llen' command\r\n";
+    }
+    List<String> list = lists.getOrDefault(args[1], List.of());
     return ":" + list.size() + "\r\n";
   }
 
