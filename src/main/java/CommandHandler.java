@@ -34,6 +34,8 @@ public class CommandHandler {
         return handleGet(args);
       case "RPUSH":
         return handleRpush(args);
+      case "LPUSH":
+        return handleLpush(args);
       case "LRANGE":
         return handleLrange(args);
       default:
@@ -49,6 +51,20 @@ public class CommandHandler {
     List<String> list = lists.computeIfAbsent(args[1], key -> new CopyOnWriteArrayList<>());
     for (int i = 2; i < args.length; i++) {
       list.add(args[i]);
+    }
+    return ":" + list.size() + "\r\n";
+  }
+
+  private String handleLpush(String[] args) {
+    if (args.length < 3) {
+      return "-ERR wrong number of arguments for 'lpush' command\r\n";
+    }
+
+    List<String> list = lists.computeIfAbsent(args[1], key -> new CopyOnWriteArrayList<>());
+    // Each value in turn goes to the front, so the last argument ends up
+    // as the new head of the list.
+    for (int i = 2; i < args.length; i++) {
+      list.add(0, args[i]);
     }
     return ":" + list.size() + "\r\n";
   }
