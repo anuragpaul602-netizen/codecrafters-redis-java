@@ -71,12 +71,21 @@ public class CommandHandler {
     List<String> list = lists.getOrDefault(args[1], List.of());
     int size = list.size();
 
+    // Negative indexes count from the end (-1 is the last element), same as
+    // Python slicing; still-negative after that just clamps to the start.
+    if (start < 0) {
+      start = Math.max(size + start, 0);
+    }
+    if (stop < 0) {
+      stop = size + stop;
+    }
+
     // Clamp stop into range; an out-of-range start just yields no elements
     // once compared against the clamped stop below.
     if (stop >= size) {
       stop = size - 1;
     }
-    if (start < 0 || start > stop || size == 0) {
+    if (start > stop || size == 0) {
       return "*0\r\n";
     }
 
