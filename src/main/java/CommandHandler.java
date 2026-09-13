@@ -50,6 +50,8 @@ public class CommandHandler {
         return handleType(args);
       case "XADD":
         return handleXadd(args);
+      case "XRANGE":
+        return handleXrange(args);
       default:
         return "-ERR unknown command '" + args[0] + "'\r\n";
     }
@@ -208,6 +210,54 @@ public class CommandHandler {
   private long[] parseStreamId(String id) {
     String[] parts = id.split("-", 2);
     return new long[] {Long.parseLong(parts[0]), Long.parseLong(parts[1])};
+  }
+
+  private String handleXrange(String[] args) {
+    if (args.length < 4) {
+      return "-ERR wrong number of arguments for 'xrange' command\r\n";
+    }
+
+    List<StreamEntry> stream = streams.getOrDefault(args[1], List.of());
+    long[] start = parseRangeBound(args[2], true);
+    long[] end = parseRangeBound(args[3], false);
+
+    List<StreamEntry> matched = new ArrayList<>();
+    for (StreamEntry entry : stream) {
+      long[] id = parseStreamId(entry.id);
+      if (compareIds(id, start) >= 0 && compareIds(id, end) <= 0) {
+        matched.add(entry);
+      }
+    }
+
+    StringBuilder response = new StringBuilder();
+    response.append('*').append(matched.size()).append("\r\n");
+    for (StreamEntry entry : matched) {
+      response.append("*2\r\n").append(encodeBulkString(entry.id));
+      response.append('*').append(entry.fieldsAndValues.size()).append("\r\n");
+      for (String fieldOrValue : entry.fieldsAndValues) {
+        response.append(encodeBulkString(fieldOrValue));
+      }
+    }
+    return response.toString();
+  }
+
+  // "-"/"+" mean smallest/largest possible id; a bare "<ms>" (no "-<seq>")
+  // defaults its missing seq to 0 for a start bound, or max for an end bound.
+  private long[] parseRangeBound(String bound, boolean isStart) {
+    if (bound.equals("-")) {
+      return new long[] {0, 0};
+    }
+    if (bound.equals("+")) {
+      return new long[] {Long.MAX_VALUE, Long.MAX_VALUE};
+    }
+    if (bound.contains("-")) {
+      return parseStreamId(bound);
+    }
+    return new long[] {Long.parseLong(bound), isStart ? 0 : Long.MAX_VALUE};
+  }
+
+  private int compareIds(long[] a, long[] b) {
+    return a[0] != b[0] ? Long.compare(a[0], b[0]) : Long.compare(a[1], b[1]);
   }
 
   private String handleBlpop(String[] args) {
