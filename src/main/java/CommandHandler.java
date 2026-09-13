@@ -264,7 +264,11 @@ public class CommandHandler {
 
   private String handleXread(String[] args) {
     int streamsIdx = -1;
+    Long blockMs = null;
     for (int i = 1; i < args.length; i++) {
+      if (args[i].equalsIgnoreCase("BLOCK") && i + 1 < args.length) {
+        blockMs = Long.parseLong(args[i + 1]);
+      }
       if (args[i].equalsIgnoreCase("STREAMS")) {
         streamsIdx = i;
         break;
@@ -281,34 +285,62 @@ public class CommandHandler {
       return "-ERR Unbalanced XREAD list of streams: for each stream key an ID or '$' must be specified.\r\n";
     }
     int numStreams = remaining / 2;
-
-    List<String> resultBlocks = new ArrayList<>();
+    String[] keys = new String[numStreams];
+    long[][] afterIds = new long[numStreams][];
     for (int i = 0; i < numStreams; i++) {
-      String key = args[streamsIdx + 1 + i];
-      long[] afterId = parseStreamId(args[streamsIdx + 1 + numStreams + i]);
+      keys[i] = args[streamsIdx + 1 + i];
+      String rawId = args[streamsIdx + 1 + numStreams + i];
+      // "$" snapshots "whatever is the last id right now" at call time, so a
+      // concurrent XADD racing with a blocked reader can't be missed or
+      // double-counted — it behaves like a resolved id from here on.
+      if (rawId.equals("$")) {
+        List<StreamEntry> stream = streams.getOrDefault(keys[i], List.of());
+        afterIds[i] = stream.isEmpty() ? new long[] {0, 0} : parseStreamId(stream.get(stream.size() - 1).id);
+      } else {
+        afterIds[i] = parseStreamId(rawId);
+      }
+    }
 
-      List<StreamEntry> matched = new ArrayList<>();
-      for (StreamEntry entry : streams.getOrDefault(key, List.of())) {
-        if (compareIds(parseStreamId(entry.id), afterId) > 0) {
-          matched.add(entry);
+    long deadline = (blockMs != null && blockMs > 0) ? System.currentTimeMillis() + blockMs : -1;
+    boolean isBlocking = blockMs != null;
+
+    while (true) {
+      List<String> resultBlocks = new ArrayList<>();
+      for (int i = 0; i < numStreams; i++) {
+        List<StreamEntry> matched = new ArrayList<>();
+        for (StreamEntry entry : streams.getOrDefault(keys[i], List.of())) {
+          if (compareIds(parseStreamId(entry.id), afterIds[i]) > 0) {
+            matched.add(entry);
+          }
+        }
+        // A stream with nothing new is left out of the result entirely, not
+        // included with an empty entry list.
+        if (!matched.isEmpty()) {
+          resultBlocks.add(encodeXreadStreamBlock(keys[i], matched));
         }
       }
-      // A stream with nothing new is left out of the result entirely, not
-      // included with an empty entry list.
-      if (!matched.isEmpty()) {
-        resultBlocks.add(encodeXreadStreamBlock(key, matched));
+
+      if (!resultBlocks.isEmpty()) {
+        StringBuilder response = new StringBuilder();
+        response.append('*').append(resultBlocks.size()).append("\r\n");
+        for (String block : resultBlocks) {
+          response.append(block);
+        }
+        return response.toString();
+      }
+      if (!isBlocking) {
+        return "*-1\r\n";
+      }
+      if (deadline != -1 && System.currentTimeMillis() >= deadline) {
+        return "*-1\r\n";
+      }
+      try {
+        Thread.sleep(50);
+      } catch (InterruptedException e) {
+        Thread.currentThread().interrupt();
+        return "*-1\r\n";
       }
     }
-
-    if (resultBlocks.isEmpty()) {
-      return "*-1\r\n";
-    }
-    StringBuilder response = new StringBuilder();
-    response.append('*').append(resultBlocks.size()).append("\r\n");
-    for (String block : resultBlocks) {
-      response.append(block);
-    }
-    return response.toString();
   }
 
   private String encodeXreadStreamBlock(String key, List<StreamEntry> matched) {
