@@ -148,21 +148,22 @@ public class CommandHandler {
     }
 
     String key = args[1];
-    String id = args[2];
+    String rawId = args[2];
+    List<StreamEntry> stream = streams.computeIfAbsent(key, k -> new CopyOnWriteArrayList<>());
+    long[] lastId = stream.isEmpty() ? null : parseStreamId(stream.get(stream.size() - 1).id);
 
-    long[] idParts;
+    String id;
     try {
-      idParts = parseStreamId(id);
+      id = resolveXaddId(rawId, lastId);
     } catch (NumberFormatException e) {
       return "-ERR Invalid stream ID specified as stream command argument\r\n";
     }
+
+    long[] idParts = parseStreamId(id);
     if (idParts[0] == 0 && idParts[1] == 0) {
       return "-ERR The ID specified in XADD must be greater than 0-0\r\n";
     }
-
-    List<StreamEntry> stream = streams.computeIfAbsent(key, k -> new CopyOnWriteArrayList<>());
-    if (!stream.isEmpty()) {
-      long[] lastId = parseStreamId(stream.get(stream.size() - 1).id);
+    if (lastId != null) {
       boolean isGreater = idParts[0] > lastId[0]
           || (idParts[0] == lastId[0] && idParts[1] > lastId[1]);
       if (!isGreater) {
@@ -176,6 +177,31 @@ public class CommandHandler {
     }
     stream.add(new StreamEntry(id, fieldsAndValues));
     return encodeBulkString(id);
+  }
+
+  // Turns "*" (fully auto) or "<ms>-*" (partially auto) into a concrete
+  // "<ms>-<seq>" id; an already-explicit id passes through unchanged.
+  private String resolveXaddId(String rawId, long[] lastId) {
+    if (rawId.equals("*")) {
+      return autoSeqId(System.currentTimeMillis(), lastId);
+    }
+    if (rawId.endsWith("-*")) {
+      long ms = Long.parseLong(rawId.substring(0, rawId.length() - 2));
+      return autoSeqId(ms, lastId);
+    }
+    return rawId;
+  }
+
+  // Sequence defaults to last+1 within the same millisecond, otherwise 0 —
+  // except ms 0 starts at 1, since 0-0 itself is a reserved, invalid id.
+  private String autoSeqId(long ms, long[] lastId) {
+    long seq;
+    if (lastId != null && lastId[0] == ms) {
+      seq = lastId[1] + 1;
+    } else {
+      seq = ms == 0 ? 1 : 0;
+    }
+    return ms + "-" + seq;
   }
 
   // Splits "<ms>-<seq>" into its two numeric parts.
