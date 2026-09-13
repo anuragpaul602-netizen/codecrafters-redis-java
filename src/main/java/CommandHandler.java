@@ -1,4 +1,5 @@
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -13,6 +14,7 @@ public class CommandHandler {
   // keeps that safe without us hand-rolling locking.
   private final Map<String, Entry> store = new ConcurrentHashMap<>();
   private final Map<String, List<String>> lists = new ConcurrentHashMap<>();
+  private final Map<String, List<StreamEntry>> streams = new ConcurrentHashMap<>();
 
   public String handle(String[] args) {
     if (args.length == 0) {
@@ -46,6 +48,8 @@ public class CommandHandler {
         return handleLrange(args);
       case "TYPE":
         return handleType(args);
+      case "XADD":
+        return handleXadd(args);
       default:
         return "-ERR unknown command '" + args[0] + "'\r\n";
     }
@@ -130,7 +134,29 @@ public class CommandHandler {
     if (lists.containsKey(key)) {
       return "+list\r\n";
     }
+    if (streams.containsKey(key)) {
+      return "+stream\r\n";
+    }
     return "+none\r\n";
+  }
+
+  private String handleXadd(String[] args) {
+    // args[1]=key, args[2]=id, then field/value pairs — needs an odd count
+    // beyond that (at least one pair).
+    if (args.length < 5 || (args.length - 3) % 2 != 0) {
+      return "-ERR wrong number of arguments for 'xadd' command\r\n";
+    }
+
+    String key = args[1];
+    String id = args[2];
+    List<String> fieldsAndValues = new ArrayList<>();
+    for (int i = 3; i < args.length; i++) {
+      fieldsAndValues.add(args[i]);
+    }
+
+    List<StreamEntry> stream = streams.computeIfAbsent(key, k -> new CopyOnWriteArrayList<>());
+    stream.add(new StreamEntry(id, fieldsAndValues));
+    return encodeBulkString(id);
   }
 
   private String handleBlpop(String[] args) {
@@ -277,6 +303,18 @@ public class CommandHandler {
 
     boolean isExpired() {
       return expiryAt != null && System.currentTimeMillis() >= expiryAt;
+    }
+  }
+
+  // One stream entry: its "<ms>-<seq>" ID plus a flat field1, value1, field2,
+  // value2... list.
+  private static class StreamEntry {
+    final String id;
+    final List<String> fieldsAndValues;
+
+    StreamEntry(String id, List<String> fieldsAndValues) {
+      this.id = id;
+      this.fieldsAndValues = fieldsAndValues;
     }
   }
 }
