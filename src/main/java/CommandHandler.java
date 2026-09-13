@@ -149,14 +149,39 @@ public class CommandHandler {
 
     String key = args[1];
     String id = args[2];
+
+    long[] idParts;
+    try {
+      idParts = parseStreamId(id);
+    } catch (NumberFormatException e) {
+      return "-ERR Invalid stream ID specified as stream command argument\r\n";
+    }
+    if (idParts[0] == 0 && idParts[1] == 0) {
+      return "-ERR The ID specified in XADD must be greater than 0-0\r\n";
+    }
+
+    List<StreamEntry> stream = streams.computeIfAbsent(key, k -> new CopyOnWriteArrayList<>());
+    if (!stream.isEmpty()) {
+      long[] lastId = parseStreamId(stream.get(stream.size() - 1).id);
+      boolean isGreater = idParts[0] > lastId[0]
+          || (idParts[0] == lastId[0] && idParts[1] > lastId[1]);
+      if (!isGreater) {
+        return "-ERR The ID specified in XADD is equal or smaller than the target stream top item\r\n";
+      }
+    }
+
     List<String> fieldsAndValues = new ArrayList<>();
     for (int i = 3; i < args.length; i++) {
       fieldsAndValues.add(args[i]);
     }
-
-    List<StreamEntry> stream = streams.computeIfAbsent(key, k -> new CopyOnWriteArrayList<>());
     stream.add(new StreamEntry(id, fieldsAndValues));
     return encodeBulkString(id);
+  }
+
+  // Splits "<ms>-<seq>" into its two numeric parts.
+  private long[] parseStreamId(String id) {
+    String[] parts = id.split("-", 2);
+    return new long[] {Long.parseLong(parts[0]), Long.parseLong(parts[1])};
   }
 
   private String handleBlpop(String[] args) {
