@@ -52,6 +52,8 @@ public class CommandHandler {
         return handleXadd(args);
       case "XRANGE":
         return handleXrange(args);
+      case "XREAD":
+        return handleXread(args);
       default:
         return "-ERR unknown command '" + args[0] + "'\r\n";
     }
@@ -258,6 +260,69 @@ public class CommandHandler {
 
   private int compareIds(long[] a, long[] b) {
     return a[0] != b[0] ? Long.compare(a[0], b[0]) : Long.compare(a[1], b[1]);
+  }
+
+  private String handleXread(String[] args) {
+    int streamsIdx = -1;
+    for (int i = 1; i < args.length; i++) {
+      if (args[i].equalsIgnoreCase("STREAMS")) {
+        streamsIdx = i;
+        break;
+      }
+    }
+    if (streamsIdx == -1) {
+      return "-ERR syntax error\r\n";
+    }
+
+    // Everything after STREAMS is "key1 key2 ... id1 id2 ..." — an equal
+    // split, keys first then their matching start-ids.
+    int remaining = args.length - streamsIdx - 1;
+    if (remaining == 0 || remaining % 2 != 0) {
+      return "-ERR Unbalanced XREAD list of streams: for each stream key an ID or '$' must be specified.\r\n";
+    }
+    int numStreams = remaining / 2;
+
+    List<String> resultBlocks = new ArrayList<>();
+    for (int i = 0; i < numStreams; i++) {
+      String key = args[streamsIdx + 1 + i];
+      long[] afterId = parseStreamId(args[streamsIdx + 1 + numStreams + i]);
+
+      List<StreamEntry> matched = new ArrayList<>();
+      for (StreamEntry entry : streams.getOrDefault(key, List.of())) {
+        if (compareIds(parseStreamId(entry.id), afterId) > 0) {
+          matched.add(entry);
+        }
+      }
+      // A stream with nothing new is left out of the result entirely, not
+      // included with an empty entry list.
+      if (!matched.isEmpty()) {
+        resultBlocks.add(encodeXreadStreamBlock(key, matched));
+      }
+    }
+
+    if (resultBlocks.isEmpty()) {
+      return "*-1\r\n";
+    }
+    StringBuilder response = new StringBuilder();
+    response.append('*').append(resultBlocks.size()).append("\r\n");
+    for (String block : resultBlocks) {
+      response.append(block);
+    }
+    return response.toString();
+  }
+
+  private String encodeXreadStreamBlock(String key, List<StreamEntry> matched) {
+    StringBuilder block = new StringBuilder();
+    block.append("*2\r\n").append(encodeBulkString(key));
+    block.append('*').append(matched.size()).append("\r\n");
+    for (StreamEntry entry : matched) {
+      block.append("*2\r\n").append(encodeBulkString(entry.id));
+      block.append('*').append(entry.fieldsAndValues.size()).append("\r\n");
+      for (String fieldOrValue : entry.fieldsAndValues) {
+        block.append(encodeBulkString(fieldOrValue));
+      }
+    }
+    return block.toString();
   }
 
   private String handleBlpop(String[] args) {
