@@ -16,11 +16,62 @@ public class CommandHandler {
   private final Map<String, List<String>> lists = new ConcurrentHashMap<>();
   private final Map<String, List<StreamEntry>> streams = new ConcurrentHashMap<>();
 
-  public String handle(String[] args) {
+  // Entry point from Main.java — handles transaction control/queueing, then
+  // hands anything else off to dispatch() for the actual command logic.
+  public String handle(String[] args, ClientContext ctx) {
     if (args.length == 0) {
       return "";
     }
+    String command = args[0].toUpperCase();
 
+    // MULTI/EXEC/DISCARD manage the transaction itself, so they're never
+    // queued even while a transaction is already open.
+    switch (command) {
+      case "MULTI":
+        ctx.inTransaction = true;
+        ctx.queuedCommands = new ArrayList<>();
+        return "+OK\r\n";
+      case "EXEC":
+        return handleExec(ctx);
+      case "DISCARD":
+        if (!ctx.inTransaction) {
+          return "-ERR DISCARD without MULTI\r\n";
+        }
+        ctx.inTransaction = false;
+        ctx.queuedCommands = new ArrayList<>();
+        return "+OK\r\n";
+      default:
+        break;
+    }
+
+    if (ctx.inTransaction) {
+      ctx.queuedCommands.add(args);
+      return "+QUEUED\r\n";
+    }
+    return dispatch(args);
+  }
+
+  private String handleExec(ClientContext ctx) {
+    if (!ctx.inTransaction) {
+      return "-ERR EXEC without MULTI\r\n";
+    }
+    ctx.inTransaction = false;
+    List<String[]> queued = ctx.queuedCommands;
+    ctx.queuedCommands = new ArrayList<>();
+
+    StringBuilder response = new StringBuilder();
+    response.append('*').append(queued.size()).append("\r\n");
+    // A per-command runtime error (e.g. INCR on a non-integer) doesn't abort
+    // the transaction — it just shows up as that command's own result.
+    for (String[] queuedArgs : queued) {
+      response.append(dispatch(queuedArgs));
+    }
+    return response.toString();
+  }
+
+  // The actual command logic, run either immediately or once per queued
+  // command inside EXEC.
+  private String dispatch(String[] args) {
     String command = args[0].toUpperCase();
     switch (command) {
       case "PING":
@@ -34,6 +85,8 @@ public class CommandHandler {
         return handleSet(args);
       case "GET":
         return handleGet(args);
+      case "INCR":
+        return handleIncr(args);
       case "RPUSH":
         return handleRpush(args);
       case "LPUSH":
@@ -57,6 +110,31 @@ public class CommandHandler {
       default:
         return "-ERR unknown command '" + args[0] + "'\r\n";
     }
+  }
+
+  private String handleIncr(String[] args) {
+    if (args.length < 2) {
+      return "-ERR wrong number of arguments for 'incr' command\r\n";
+    }
+    String key = args[1];
+
+    Entry entry = store.get(key);
+    boolean hasValue = entry != null && !entry.isExpired();
+
+    long current = 0;
+    if (hasValue) {
+      try {
+        current = Long.parseLong(entry.value);
+      } catch (NumberFormatException e) {
+        return "-ERR value is not an integer or out of range\r\n";
+      }
+    }
+
+    long updated = current + 1;
+    // INCR doesn't touch an existing key's TTL, it just bumps the value.
+    Long expiryAt = hasValue ? entry.expiryAt : null;
+    store.put(key, new Entry(Long.toString(updated), expiryAt));
+    return ":" + updated + "\r\n";
   }
 
   private String handleRpush(String[] args) {

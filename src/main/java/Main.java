@@ -10,7 +10,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class Main {
-  // Stateless, so one shared instance is safe to call from every client thread.
+  // The data store (strings/lists/streams) is shared across every client
+  // thread, so one instance is reused for all connections.
   private static final CommandHandler commandHandler = new CommandHandler();
 
   public static void main(String[] args) {
@@ -44,6 +45,10 @@ public class Main {
          InputStream input = new BufferedInputStream(clientSocket.getInputStream());
          OutputStream output = clientSocket.getOutputStream()) {
 
+      // Transaction state (MULTI/queued commands) is per-connection, so it
+      // lives here rather than on the shared CommandHandler.
+      ClientContext context = new ClientContext();
+
       List<String> command;
       // Keep reading commands off this connection until the client closes
       // it — readCommand() returns null once there's nothing left to read.
@@ -51,7 +56,7 @@ public class Main {
         if (command.isEmpty()) {
           continue;
         }
-        String response = commandHandler.handle(command.toArray(new String[0]));
+        String response = commandHandler.handle(command.toArray(new String[0]), context);
         output.write(response.getBytes(StandardCharsets.UTF_8));
       }
     } catch (IOException e) {
